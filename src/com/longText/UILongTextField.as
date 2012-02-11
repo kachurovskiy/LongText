@@ -1,6 +1,8 @@
 package com.longText
 {
 import flash.text.TextField;
+import flash.utils.getTimer;
+import flash.utils.setInterval;
 
 import mx.core.UITextField;
 
@@ -13,7 +15,7 @@ public class UILongTextField extends UITextField
 	/**
 	 * Virtualization logic starts working if <code>text</code> is longer.
 	 */
-	public static const LONG_TEXT_LENGTH:int = 50 * 1024 * 1024;
+	public static const LONG_TEXT_LENGTH:int = 50 * 1024;
 	
 	/**
 	 * Recalculate virtual scrolling if component width have changed by more 
@@ -24,7 +26,7 @@ public class UILongTextField extends UITextField
 	/**
 	 * Amount of lines user can continuously scroll without artifacts.
 	 */
-	protected static const CONTINUOUS_SCROLL:int = 10000;
+	protected static const CONTINUOUS_SCROLL:int = 1000;
 
 	public function UILongTextField()
 	{
@@ -121,6 +123,7 @@ public class UILongTextField extends UITextField
 		// slightly changed and user expect scrolling to stay on position.
 		
 		_text = value;
+		var startTime:int = getTimer();
 		updateTextInfo();
 		
 		// If text is not long enough don't start virtualization.
@@ -133,11 +136,18 @@ public class UILongTextField extends UITextField
 		_virtual = true;
 		updateScrollSettings();
 		updateVisibleText();
+		trace("Set text time - " + (getTimer() - startTime));
 	}
 	
 	protected function createTestField():void
 	{
 		testField = new TextField();
+		setInterval(addTestField, 500);
+	}
+	
+	private function addTestField():void {
+		if (!testField.parent && stage)
+			stage.addChild(testField);
 	}
 	
 	protected function updateTextInfo():void
@@ -176,10 +186,7 @@ public class UILongTextField extends UITextField
 		scrollVVirtualPrev = 0;
 		scrollVVirtual = Math.min(maxScrollVVirtual, scrollVVirtual);
 		
-		testField.width = width;
-		testField.height = height;
-		testField.wordWrap = wordWrap;
-		testField.setTextFormat(getTextStyles());
+		updateTestField();
 	}
 	
 	protected function getNumLinesInField():int
@@ -217,10 +224,21 @@ public class UILongTextField extends UITextField
 			maxScrollVVirtual == maxScrollVVirtualPrev)
 			return;
 		
+		updateTestField();
+		
 		super.text = getVisibleText();
 		
 		scrollVVirtualPrev = scrollVVirtual;
 		maxScrollVVirtualPrev = maxScrollVVirtual;
+	}
+	
+	protected function updateTestField():void
+	{
+		testField.width = width;
+		testField.height = height;
+		testField.wordWrap = wordWrap;
+		testField.setTextFormat(testField.getTextFormat());
+		testField.defaultTextFormat = defaultTextFormat;
 	}
 	
 	protected function getVisibleText():String
@@ -232,8 +250,7 @@ public class UILongTextField extends UITextField
 			if (scrollVVirtualPrev && delta > 0 && delta < numVisibleLines) {
 				startIndex = textStartIndex + getLineOffset(delta);
 			} else if (scrollVVirtualPrev && delta < 0 && delta > - numVisibleLines) {
-				startIndex = textStartIndex - countWrappedLinesBack(-delta, 
-					textStartIndex);
+				startIndex = countLinesBack(-delta, textStartIndex);
 			} else {
 				startIndex = getStartIndex();
 			}
@@ -247,8 +264,25 @@ public class UILongTextField extends UITextField
 			}
 			lengthRequired = index == -1 ? textLength - startIndex : index;
 		}
+		var candidate:String = _text.substr(startIndex, lengthRequired);
+		
+		// If candidate is not long enough to fill numVisibleLines then
+		// move startIndex back and set scroll position to the end.
+		setTestText(candidate);
+		if (testField.numLines < numVisibleLines) {
+			startIndex = countLinesBack(numVisibleLines - testField.numLines,
+				startIndex);
+			candidate = _text.substr(startIndex);
+			scrollVVirtual = maxScrollVVirtual;
+		}
 		textStartIndex = startIndex;
-		return _text.substr(startIndex, lengthRequired);
+		return candidate;
+	}
+	
+	protected function setTestText(string:String):void
+	{
+		testField.text = string;
+		testField.defaultTextFormat = defaultTextFormat;
 	}
 	
 	/**
@@ -256,21 +290,48 @@ public class UILongTextField extends UITextField
 	 * of text before line starting with <code>fromIndex</code> with current
 	 * text field settings.
 	 */
-	protected function countWrappedLinesBack(delta:int, fromIndex:int):int
+	protected function countLinesBack(delta:int, fromIndex:int):int
 	{
-		if (delta == 0)
-			return 0;
-		var index:int = fromIndex - 1;
-		// Not optimal, refactor if it will be a problem.
-		while (index > 0) {
-			var testText:String = _text.substring(index, fromIndex + 1);
-			testField.text = testText;
-			if (testField.numLines > delta + 1) {
-				return fromIndex - index + 1;
-			}
-			index--;
+		while (delta > 0 && fromIndex > 0) {
+			fromIndex = countLineBack(fromIndex);
+			delta--;
 		}
 		return fromIndex;
+	}
+	
+	protected function countLineBack(fromIndex:int):int
+	{
+		if (_text.charAt(fromIndex - 1) == lineSeparator &&
+			_text.charAt(fromIndex - 2) == lineSeparator)
+			return fromIndex - 1;
+		
+		if (_text.charAt(fromIndex - 1) == lineSeparator) {
+			fromIndex -= 1;
+		
+			// Find previous line of text.
+			var previousLine:String;
+			var previousLineLength:int = Math.min(fromIndex, CONTINUOUS_SCROLL);
+			var scrollablePiece:String = _text.substr(
+				fromIndex - previousLineLength, previousLineLength);
+			var lastNewLine:int = scrollablePiece.lastIndexOf(lineSeparator);
+			if (lastNewLine == -1)
+				previousLine = scrollablePiece;
+			else
+				previousLine = scrollablePiece.substr(lastNewLine + 1);
+			setTestText(previousLine);
+			var lineOffset:int = testField.getLineOffset(testField.numLines - 1);
+			return fromIndex - (previousLine.length - lineOffset);
+		} else {
+			var index:int = fromIndex - 1;
+			
+			while (index > 0) {
+				setTestText(_text.substring(index, fromIndex));
+				if (testField.numLines > 1)
+					return index + 1;
+				index--;
+			}
+			return fromIndex;
+		}
 	}
 	
 	protected function getStartIndex():int
