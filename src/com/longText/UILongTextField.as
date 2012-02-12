@@ -14,11 +14,6 @@ public class UILongTextField extends UITextField
 {
 	
 	/**
-	 * Virtualization logic starts working if <code>text</code> is longer.
-	 */
-	public static const LONG_TEXT_LENGTH:int = 0;//50 * 1024;
-	
-	/**
 	 * Recalculate virtual scrolling if component width have changed by more 
 	 * than 10%.
 	 */
@@ -53,36 +48,24 @@ public class UILongTextField extends UITextField
 	protected var numVisibleCharsInLine:int = 1;
 	protected var numAverageCharsInTextLine:int = 1;
 	
-	protected var _virtual:Boolean = false;
-	
-	[Bindable("textChange")]
-	public function get virtual():Boolean {
-		return _virtual;
-	}
-	
 	override public function set htmlText(value:String):void
 	{
 		throw new Error("htmlText is not supported");
 	}
 	
 	override public function get numLines():int {
-		return _virtual ? numLinesInField : super.numLines;
+		return numLinesInField;
 	}
 	
 	override public function get maxScrollV():int {
-		return _virtual ? maxScrollVVirtual : super.maxScrollV;
+		return maxScrollVVirtual;
 	}
 	
 	override public function get scrollV():int {
-		return _virtual ? scrollVVirtual : super.scrollV;
+		return scrollVVirtual;
 	}
 	
 	override public function set scrollV(value:int):void {
-		if (!_virtual) {
-			super.scrollV = value;
-			return;
-		}
-		
 		if (scrollVVirtual < 1)
 			scrollVVirtual = 1;
 		if (scrollVVirtual > maxScrollVVirtual)
@@ -95,9 +78,6 @@ public class UILongTextField extends UITextField
 	}
 	
 	override public function get bottomScrollV():int {
-		if (!_virtual)
-			return super.bottomScrollV;
-		
 		return scrollVVirtual + numVisibleLines - 1;
 	}
 	
@@ -116,7 +96,7 @@ public class UILongTextField extends UITextField
 	
 	override public function get text():String
 	{
-		return _virtual ? _text : super.text;
+		return _text;
 	}
 	
 	override public function set text(value:String):void
@@ -134,15 +114,6 @@ public class UILongTextField extends UITextField
 		_text = value;
 		var startTime:int = getTimer();
 		updateTextInfo();
-		
-		// If text is not long enough don't start virtualization.
-		if (!multiline || value.length <= LONG_TEXT_LENGTH) {
-			_virtual = false;
-			super.text = value;
-			return;
-		}
-		
-		_virtual = true;
 		updateScrollSettings();
 		updateVisibleText();
 		trace("Set text time - " + (getTimer() - startTime));
@@ -157,12 +128,15 @@ public class UILongTextField extends UITextField
 	protected function createTestField():void
 	{
 		testField = new TextField();
-		setInterval(addTestField, 500);
 	}
 	
-	private function addTestField():void {
-		if (!testField.parent && stage)
-			stage.addChild(testField);
+	protected function updateTestField():void
+	{
+		testField.width = width;
+		testField.height = height;
+		testField.wordWrap = wordWrap;
+		testField.setTextFormat(testField.getTextFormat());
+		testField.defaultTextFormat = defaultTextFormat;
 	}
 	
 	protected function updateTextInfo():void
@@ -193,7 +167,7 @@ public class UILongTextField extends UITextField
 	
 	protected function updateScrollSettings():void
 	{
-		if (!_text || !_virtual) {
+		if (!_text) {
 			return;
 		}
 		
@@ -218,21 +192,19 @@ public class UILongTextField extends UITextField
 	}
 	
 	/**
-	 * Returns minimum amount of lines that do not fit into screen without 
-	 * scrolling.
+	 * Returns maximum amount of lines that fit into screen without scrolling.
 	 */
 	protected function getNumVisibleLines():int
 	{
 		setTestText("");
-		while (testField.textHeight < testField.height) {
-			setTestText(testField.text + "\n");
+		while (testField.bottomScrollV == testField.numLines) {
+			setTestText(testField.text + "a\n");
 		}
-		return testField.numLines - 1;
+		return testField.bottomScrollV;
 	}
 	
 	/**
-	 * Calculates minimum amount of chars that do not fit into one screen 
-	 * with word wrap and current text format.
+	 * Returns maximum amount of chars that fit into screen without scrolling.
 	 */
 	protected function getNumVisibleCharsInLine():int
 	{
@@ -247,7 +219,8 @@ public class UILongTextField extends UITextField
 	
 	protected function updateVisibleText():void
 	{
-		if (!_text || !_virtual) {
+		if (!_text) {
+			super.text = "";
 			return;
 		}
 		
@@ -263,15 +236,6 @@ public class UILongTextField extends UITextField
 		maxScrollVVirtualPrev = maxScrollVVirtual;
 	}
 	
-	protected function updateTestField():void
-	{
-		testField.width = width;
-		testField.height = height;
-		testField.wordWrap = wordWrap;
-		testField.setTextFormat(testField.getTextFormat());
-		testField.defaultTextFormat = defaultTextFormat;
-	}
-	
 	protected function getVisibleText():String
 	{
 		var startIndex:int = 0;
@@ -279,7 +243,7 @@ public class UILongTextField extends UITextField
 		var delta:int = scrollVVirtual - scrollVVirtualPrev;
 		if (scrollVVirtual == 1) {
 			startIndex = 0;
-		} else if (wordWrap) {
+		} else {
 			if (scrollVVirtualPrev && delta > 0 && delta < numVisibleLines) {
 				startIndex = textStartIndex + getLineOffset(delta);
 			} else if (scrollVVirtualPrev && delta < 0 && delta > - numVisibleLines) {
@@ -287,14 +251,6 @@ public class UILongTextField extends UITextField
 			} else {
 				startIndex = getStartIndex();
 			}
-		} else {
-			var index:int = startIndex;
-			var linesFound:int = 0;
-			while (index != -1 && linesFound < numVisibleLines) {
-				index = _text.indexOf(lineSeparator, index + 1);
-				linesFound++;
-			}
-			lengthRequired = index == -1 ? textLength - startIndex : index;
 		}
 		var candidate:String = _text.substr(startIndex, lengthRequired);
 		setTestText(candidate);
@@ -318,8 +274,12 @@ public class UILongTextField extends UITextField
 			scrollVVirtual = maxScrollVVirtual;
 			notifyAboutScrollFix();
 		} else if (startIndex + lengthRequired >= textLength) {
-			scrollVVirtual = maxScrollVVirtual - (testField.numLines - numVisibleLines);
-			notifyAboutScrollFix();
+			var preciseScrollV:int = maxScrollVVirtual -
+				(testField.numLines - numVisibleLines);
+			if (preciseScrollV != scrollVVirtual) {
+				scrollVVirtual = preciseScrollV;
+				notifyAboutScrollFix();
+			}
 		}
 		textStartIndex = startIndex;
 		return candidate;
