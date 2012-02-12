@@ -1,5 +1,6 @@
 package com.longText
 {
+import flash.events.Event;
 import flash.text.TextField;
 import flash.utils.getTimer;
 import flash.utils.setInterval;
@@ -15,7 +16,7 @@ public class UILongTextField extends UITextField
 	/**
 	 * Virtualization logic starts working if <code>text</code> is longer.
 	 */
-	public static const LONG_TEXT_LENGTH:int = 50 * 1024;
+	public static const LONG_TEXT_LENGTH:int = 0;//50 * 1024;
 	
 	/**
 	 * Recalculate virtual scrolling if component width have changed by more 
@@ -69,14 +70,19 @@ public class UILongTextField extends UITextField
 	}
 	
 	override public function get maxScrollV():int {
-		return maxScrollVVirtual;
+		return _virtual ? maxScrollVVirtual : super.maxScrollV;
 	}
 	
 	override public function get scrollV():int {
-		return scrollVVirtual;
+		return _virtual ? scrollVVirtual : super.scrollV;
 	}
 	
 	override public function set scrollV(value:int):void {
+		if (!_virtual) {
+			super.scrollV = value;
+			return;
+		}
+		
 		if (scrollVVirtual < 1)
 			scrollVVirtual = 1;
 		if (scrollVVirtual > maxScrollVVirtual)
@@ -89,6 +95,9 @@ public class UILongTextField extends UITextField
 	}
 	
 	override public function get bottomScrollV():int {
+		if (!_virtual)
+			return super.bottomScrollV;
+		
 		return scrollVVirtual + numVisibleLines - 1;
 	}
 	
@@ -107,7 +116,7 @@ public class UILongTextField extends UITextField
 	
 	override public function get text():String
 	{
-		return _text;
+		return _virtual ? _text : super.text;
 	}
 	
 	override public function set text(value:String):void
@@ -139,6 +148,12 @@ public class UILongTextField extends UITextField
 		trace("Set text time - " + (getTimer() - startTime));
 	}
 	
+	override public function setActualSize(w:Number, h:Number):void {
+		super.setActualSize(w, h);
+		updateScrollSettings();
+		updateVisibleText();
+	}
+	
 	protected function createTestField():void
 	{
 		testField = new TextField();
@@ -167,7 +182,7 @@ public class UILongTextField extends UITextField
 	
 	protected function getNumLinesInText(separator:String):int
 	{
-		var lines:int = 0;
+		var lines:int = 1;
 		var index:int = 0;
 		while (index != -1) {
 			index = _text.indexOf(separator, index + 1);
@@ -178,6 +193,10 @@ public class UILongTextField extends UITextField
 	
 	protected function updateScrollSettings():void
 	{
+		if (!_text || !_virtual) {
+			return;
+		}
+		
 		numVisibleLines = getNumVisibleLines();
 		numVisibleCharsInLine = getNumVisibleCharsInLine();
 		numLinesInField = getNumLinesInField();
@@ -204,8 +223,11 @@ public class UILongTextField extends UITextField
 	 */
 	protected function getNumVisibleLines():int
 	{
-		// TODO
-		return Math.ceil(height / 5);
+		setTestText("");
+		while (testField.textHeight < testField.height) {
+			setTestText(testField.text + "\n");
+		}
+		return testField.numLines - 1;
 	}
 	
 	/**
@@ -214,12 +236,21 @@ public class UILongTextField extends UITextField
 	 */
 	protected function getNumVisibleCharsInLine():int
 	{
-		// TODO
-		return Math.ceil(width / 3);
+		setTestText("");
+		testField.wordWrap = true;
+		while (testField.numLines <= 1) {
+			setTestText(testField.text + "a");
+		}
+		testField.wordWrap = wordWrap;
+		return Math.max(1, testField.text.length - 1);
 	}
 	
 	protected function updateVisibleText():void
 	{
+		if (!_text || !_virtual) {
+			return;
+		}
+		
 		if (scrollVVirtual == scrollVVirtualPrev && 
 			maxScrollVVirtual == maxScrollVVirtualPrev)
 			return;
@@ -244,9 +275,11 @@ public class UILongTextField extends UITextField
 	protected function getVisibleText():String
 	{
 		var startIndex:int = 0;
-		var lengthRequired:int = 1;
+		var lengthRequired:int = numVisibleCharsInLine * numVisibleLines * 1.5;
 		var delta:int = scrollVVirtual - scrollVVirtualPrev;
-		if (wordWrap) {
+		if (scrollVVirtual == 1) {
+			startIndex = 0;
+		} else if (wordWrap) {
 			if (scrollVVirtualPrev && delta > 0 && delta < numVisibleLines) {
 				startIndex = textStartIndex + getLineOffset(delta);
 			} else if (scrollVVirtualPrev && delta < 0 && delta > - numVisibleLines) {
@@ -254,7 +287,6 @@ public class UILongTextField extends UITextField
 			} else {
 				startIndex = getStartIndex();
 			}
-			lengthRequired = numVisibleCharsInLine * numVisibleLines;
 		} else {
 			var index:int = startIndex;
 			var linesFound:int = 0;
@@ -265,18 +297,37 @@ public class UILongTextField extends UITextField
 			lengthRequired = index == -1 ? textLength - startIndex : index;
 		}
 		var candidate:String = _text.substr(startIndex, lengthRequired);
+		setTestText(candidate);
+		
+		// If lengthRequired was not big enough to fill the screen, get more text.
+		while (testField.numLines <= numVisibleLines &&
+			startIndex + lengthRequired < textLength) {
+			lengthRequired *= 2;
+			candidate = _text.substr(startIndex, lengthRequired);
+			setTestText(candidate);
+		}
 		
 		// If candidate is not long enough to fill numVisibleLines then
 		// move startIndex back and set scroll position to the end.
-		setTestText(candidate);
-		if (testField.numLines < numVisibleLines) {
+		if (testField.numLines < numVisibleLines && 
+			startIndex + lengthRequired >= textLength) {
+			// We're at the end of text and need to scroll back to fill screen.
 			startIndex = countLinesBack(numVisibleLines - testField.numLines,
 				startIndex);
 			candidate = _text.substr(startIndex);
 			scrollVVirtual = maxScrollVVirtual;
+			notifyAboutScrollFix();
+		} else if (startIndex + lengthRequired >= textLength) {
+			scrollVVirtual = maxScrollVVirtual - (testField.numLines - numVisibleLines);
+			notifyAboutScrollFix();
 		}
 		textStartIndex = startIndex;
 		return candidate;
+	}
+	
+	protected function notifyAboutScrollFix():void
+	{
+		dispatchEvent(new Event(Event.SCROLL));
 	}
 	
 	protected function setTestText(string:String):void
@@ -305,39 +356,36 @@ public class UILongTextField extends UITextField
 			_text.charAt(fromIndex - 2) == lineSeparator)
 			return fromIndex - 1;
 		
-		if (_text.charAt(fromIndex - 1) == lineSeparator) {
-			fromIndex -= 1;
+		if (_text.charAt(fromIndex - 1) == lineSeparator)
+			fromIndex--;
 		
-			// Find previous line of text.
-			var previousLine:String;
-			var previousLineLength:int = Math.min(fromIndex, CONTINUOUS_SCROLL);
-			var scrollablePiece:String = _text.substr(
-				fromIndex - previousLineLength, previousLineLength);
-			var lastNewLine:int = scrollablePiece.lastIndexOf(lineSeparator);
-			if (lastNewLine == -1)
-				previousLine = scrollablePiece;
-			else
-				previousLine = scrollablePiece.substr(lastNewLine + 1);
-			setTestText(previousLine);
-			var lineOffset:int = testField.getLineOffset(testField.numLines - 1);
-			return fromIndex - (previousLine.length - lineOffset);
-		} else {
-			var index:int = fromIndex - 1;
-			
-			while (index > 0) {
-				setTestText(_text.substring(index, fromIndex));
-				if (testField.numLines > 1)
-					return index + 1;
-				index--;
-			}
-			return fromIndex;
-		}
+		var lineStartIndex:int = getLineStartByCharIndex(fromIndex);
+		var previousLine:String = _text.substring(lineStartIndex, fromIndex);
+		setTestText(previousLine);
+		
+		var lineOffset:int = testField.getLineOffset(testField.numLines - 1);
+		return lineStartIndex + lineOffset;
+	}
+	
+	protected function getLineStartByCharIndex(fromIndex:int):int
+	{
+		var lineStartIndex:int = Math.max(0, fromIndex - CONTINUOUS_SCROLL);
+		var newLineIndex:int = lineStartIndex;
+		var lastNewLineIndex:int = lineStartIndex;
+		do {
+			lastNewLineIndex = newLineIndex;
+			newLineIndex = _text.indexOf(lineSeparator, newLineIndex + 1);
+		} while (newLineIndex > 0 && newLineIndex < fromIndex)
+		return lastNewLineIndex;
 	}
 	
 	protected function getStartIndex():int
 	{
 		if (wordWrap) {
-			return textLength * (scrollVVirtual - 1) / maxScrollVVirtual;
+			var approximateIndex:int = textLength * scrollVVirtual / maxScrollVVirtual;
+			var lineStartIndex:int = getLineStartByCharIndex(approximateIndex);
+			setTestText(_text.substring(lineStartIndex, approximateIndex));
+			return lineStartIndex + testField.getLineOffset(testField.numLines - 1);
 		} else {
 			var index:int = numAverageCharsInTextLine * (scrollVVirtual - 1);
 			// Find first new line and start from it.
