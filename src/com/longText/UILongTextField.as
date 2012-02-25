@@ -27,6 +27,9 @@ public class UILongTextField extends UITextField
 	public function UILongTextField()
 	{
 		super();
+		
+		addEventListener(Event.SCROLL, scrollHandler, false, int.MAX_VALUE);
+		
 		createTestField();
 	}
 	
@@ -41,6 +44,9 @@ public class UILongTextField extends UITextField
 	protected var maxScrollVVirtual:int = 1;
 	
 	protected var textStartIndex:Number = 0;
+	protected var realText:String;
+	protected var realTextLength:int = 0;
+	protected var visibleTextLength:int = 0;
 	
 	protected var lastEstimateWidth:Number = 0;
 	
@@ -48,9 +54,52 @@ public class UILongTextField extends UITextField
 	protected var numVisibleCharsInLine:int = 1;
 	protected var numAverageCharsInTextLine:int = 1;
 	
+	protected var selectionBeginIndexVirtual:int = 0;
+	protected var selectionEndIndexVirtual:int = 0;
+	protected var lastSelectionBeginIndex:int = 0;
+	protected var lastSelectionEndIndex:int = 0;
+	protected var selectionInFieldIsValid:Boolean = true;
+	
+	protected var ignoreScrollCounter:int = 0;
+
+	override public function get htmlText():String
+	{
+		return _text;
+	}
+	
 	override public function set htmlText(value:String):void
 	{
 		throw new Error("htmlText is not supported");
+	}
+	
+	override public function get maxChars():int
+	{
+		return 0;
+	}
+	
+	override public function set maxChars(value:int):void
+	{
+		throw new Error("maxChars is not supported");
+	}
+	
+	override public function get selectionBeginIndex():int {
+		return selectionBeginIndexVirtual;
+	}
+	
+	override public function get selectionEndIndex():int {
+		return selectionEndIndexVirtual;
+	}
+	
+	public function get superSelectionBeginIndex():int {
+		return super.selectionBeginIndex;
+	}
+	
+	public function get superSelectionEndIndex():int {
+		return super.selectionEndIndex;
+	}
+	
+	override public function get caretIndex():int {
+		return textStartIndex + super.caretIndex;
 	}
 	
 	override public function get numLines():int {
@@ -73,8 +122,12 @@ public class UILongTextField extends UITextField
 		if (scrollVVirtual == value)
 			return;
 		
+		// Select all may stay unhandled until now if user scroll to the end 
+		// of field and then use context menu.
+		handleSelectAll(false);
+		
 		scrollVVirtual = value;
-		updateVisibleText();
+		checkVisibleText();
 	}
 	
 	override public function get bottomScrollV():int {
@@ -87,7 +140,7 @@ public class UILongTextField extends UITextField
 		
 		super.wordWrap = value;
 		updateScrollSettings();
-		updateVisibleText();
+		checkVisibleText();
 	}
 	
 	protected var _text:String = "";
@@ -112,17 +165,16 @@ public class UILongTextField extends UITextField
 		// slightly changed and user expect scrolling to stay on position.
 		
 		_text = value;
-		var startTime:int = getTimer();
+		resetSelection();
 		updateTextInfo();
 		updateScrollSettings();
-		updateVisibleText();
-		trace("Set text time - " + (getTimer() - startTime));
+		checkVisibleText();
 	}
 	
 	override public function setActualSize(w:Number, h:Number):void {
 		super.setActualSize(w, h);
 		updateScrollSettings();
-		updateVisibleText();
+		checkVisibleText();
 	}
 	
 	protected function createTestField():void
@@ -137,6 +189,41 @@ public class UILongTextField extends UITextField
 		testField.wordWrap = wordWrap;
 		testField.setTextFormat(testField.getTextFormat());
 		testField.defaultTextFormat = defaultTextFormat;
+	}
+	
+	protected function resetSelection():void
+	{
+		selectionBeginIndexVirtual = 0;
+		selectionEndIndexVirtual = 0;
+	}
+	
+	protected function readSelection():void
+	{
+		if (lastSelectionBeginIndex != super.selectionBeginIndex)
+			selectionBeginIndexVirtual = textStartIndex + super.selectionBeginIndex;
+		if (lastSelectionEndIndex != super.selectionEndIndex)
+			selectionEndIndexVirtual = textStartIndex + super.selectionEndIndex;
+	}
+	
+	protected function updateSelection():void
+	{
+		ignoreScrollCounter++;
+		var begin:int;
+		var end:int;
+		if (selectionEndIndexVirtual < textStartIndex ||
+			selectionBeginIndexVirtual > textStartIndex + visibleTextLength) {
+			var invisibleIndex:int = textStartIndex + realTextLength;
+			begin = end = invisibleIndex;
+		} else {
+			begin = Math.max(selectionBeginIndexVirtual - textStartIndex, 0);
+			end = Math.min(selectionEndIndexVirtual - 
+				textStartIndex, textStartIndex + realTextLength);
+		}
+		setSelection(begin, end);
+		super.scrollV = 0;
+		lastSelectionBeginIndex = super.selectionBeginIndex;
+		lastSelectionEndIndex = super.selectionEndIndex;
+		ignoreScrollCounter--;
 	}
 	
 	protected function updateTextInfo():void
@@ -217,26 +304,31 @@ public class UILongTextField extends UITextField
 		return Math.max(1, testField.text.length - 1);
 	}
 	
-	protected function updateVisibleText():void
+	protected function checkVisibleText():Boolean
 	{
 		if (!_text) {
 			super.text = "";
-			return;
+			return true;
 		}
 		
 		if (scrollVVirtual == scrollVVirtualPrev && 
 			maxScrollVVirtual == maxScrollVVirtualPrev)
-			return;
+			return false;
 		
+		ignoreScrollCounter++;
 		updateTestField();
-		
-		super.text = getVisibleText();
-		
+		if (selectionInFieldIsValid)
+			readSelection();
+		updateVisibleText();
+		updateSelection();
 		scrollVVirtualPrev = scrollVVirtual;
 		maxScrollVVirtualPrev = maxScrollVVirtual;
+		ignoreScrollCounter--;
+		selectionInFieldIsValid = true;
+		return true;
 	}
 	
-	protected function getVisibleText():String
+	protected function updateVisibleText():void
 	{
 		var startIndex:int = 0;
 		var lengthRequired:int = numVisibleCharsInLine * numVisibleLines * 1.5;
@@ -282,16 +374,26 @@ public class UILongTextField extends UITextField
 			}
 		}
 		textStartIndex = startIndex;
-		return candidate;
+		realText = candidate;
+		realTextLength = candidate.length;
+		setTestText(candidate);
+		visibleTextLength = testField.getLineOffset(numVisibleLines - 1) + 
+			testField.getLineLength(numVisibleLines - 1);
+		super.text = candidate;
 	}
 	
 	protected function notifyAboutScrollFix():void
 	{
+		ignoreScrollCounter++;
 		dispatchEvent(new Event(Event.SCROLL));
+		ignoreScrollCounter--;
 	}
 	
 	protected function setTestText(string:String):void
 	{
+		if (testField.text == string)
+			return;
+		
 		testField.text = string;
 		testField.defaultTextFormat = defaultTextFormat;
 	}
@@ -366,6 +468,39 @@ public class UILongTextField extends UITextField
 	 */
 	protected function estimateMaxScrollV():int {
 		return Math.max(1, numLinesInField - numVisibleLines + 1);
+	}
+	
+	protected function scrollHandler(event:Event):void
+	{
+		if (ignoreScrollCounter > 0) {
+			if (super.scrollV != 0)
+				super.scrollV = 0;
+			event.stopImmediatePropagation();
+		} else if (!handleSelectAll()) {
+			ignoreScrollCounter++;
+			scrollV += super.scrollV;
+			ignoreScrollCounter--;
+		}
+	}
+	
+	/**
+	 * Returns true if user has just selected all text via Ctrl+A or
+	 * context menu.
+	 */
+	protected function handleSelectAll(modifyScroll:Boolean = true):Boolean
+	{
+		if (super.selectionBeginIndex == 0 && 
+			super.selectionEndIndex == realTextLength &&
+			(selectionBeginIndexVirtual != 0 || 
+			selectionEndIndexVirtual != textLength)) {
+			selectionInFieldIsValid = false;
+			selectionBeginIndexVirtual = 0;
+			selectionEndIndexVirtual = textLength;
+			if (modifyScroll)
+				scrollV = maxScrollV;
+			return true;
+		}
+		return false;
 	}
 	
 }
