@@ -2,9 +2,11 @@ package com.longText
 {
 import flash.events.Event;
 import flash.text.TextField;
+import flash.text.TextFieldType;
 import flash.utils.getTimer;
 import flash.utils.setInterval;
 
+import mx.controls.TextInput;
 import mx.core.UITextField;
 
 /**
@@ -76,6 +78,12 @@ public class UILongTextField extends UITextField
 	override public function set htmlText(value:String):void
 	{
 		throw new Error("htmlText is not supported");
+	}
+	
+	override public function set type(value:String):void
+	{
+		// Editing is not yet supported.
+		super.type = TextFieldType.DYNAMIC;
 	}
 	
 	override public function get maxChars():int
