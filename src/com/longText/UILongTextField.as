@@ -1,6 +1,7 @@
 package com.longText
 {
 import flash.events.Event;
+import flash.events.MouseEvent;
 import flash.text.TextField;
 import flash.text.TextFieldType;
 import flash.utils.getTimer;
@@ -37,6 +38,7 @@ public class UILongTextField extends UITextField
 		super();
 		
 		addEventListener(Event.SCROLL, scrollHandler, false, int.MAX_VALUE);
+		addEventListener(MouseEvent.MOUSE_WHEEL, mouseWheelHandler);
 		
 		createTestField();
 	}
@@ -366,13 +368,13 @@ public class UILongTextField extends UITextField
 				startIndex);
 			candidate = _text.substr(startIndex);
 			scrollVVirtual = maxScrollVVirtual;
-			notifyAboutScrollFix();
+			notifyAboutScrollChange();
 		} else if (startIndex + lengthRequired >= textLength) {
 			var preciseScrollV:int = maxScrollVVirtual -
 				Math.max(0, testField.numLines - numVisibleLines);
 			if (preciseScrollV != scrollVVirtual) {
 				scrollVVirtual = preciseScrollV;
-				notifyAboutScrollFix();
+				notifyAboutScrollChange();
 			}
 		}
 		textStartIndex = startIndex;
@@ -384,7 +386,7 @@ public class UILongTextField extends UITextField
 		super.text = candidate;
 	}
 	
-	protected function notifyAboutScrollFix():void
+	protected function notifyAboutScrollChange():void
 	{
 		ignoreScrollCounter++;
 		var value:Boolean = preventIgnoredScrollEvents;
@@ -475,20 +477,6 @@ public class UILongTextField extends UITextField
 		return Math.max(1, numLinesInField - numVisibleLines + 1);
 	}
 	
-	protected function scrollHandler(event:Event):void
-	{
-		if (ignoreScrollCounter > 0) {
-			if (super.scrollV != 0)
-				super.scrollV = 0;
-			if (preventIgnoredScrollEvents)
-				event.stopImmediatePropagation();
-		} else if (!handleSelectAll()) {
-			ignoreScrollCounter++;
-			scrollV += super.scrollV;
-			ignoreScrollCounter--;
-		}
-	}
-	
 	/**
 	 * Returns true if user has just selected all text via Ctrl+A or
 	 * context menu.
@@ -506,6 +494,30 @@ public class UILongTextField extends UITextField
 			return true;
 		}
 		return false;
+	}
+	
+	protected function scrollHandler(event:Event):void
+	{
+		if (ignoreScrollCounter > 0) {
+			if (super.scrollV != 0)
+				super.scrollV = 0;
+			if (preventIgnoredScrollEvents)
+				event.stopImmediatePropagation();
+		} else if (!handleSelectAll()) {
+			ignoreScrollCounter++;
+			scrollV += super.scrollV;
+			ignoreScrollCounter--;
+		}
+	}
+	
+	protected function mouseWheelHandler(event:MouseEvent):void
+	{
+		// Handle only scroll up because it's never executed since we're
+		// in fact always on 1st line and can't scroll up without this. 
+		if (event.delta > 0 && scrollVVirtual > 1) {
+			scrollV -= event.delta;
+			notifyAboutScrollChange();
+		}
 	}
 	
 }
