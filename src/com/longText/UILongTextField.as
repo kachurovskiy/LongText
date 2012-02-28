@@ -37,9 +37,7 @@ public class UILongTextField extends UITextField
 	{
 		super();
 		
-		addEventListener(Event.SCROLL, scrollHandler, false, int.MAX_VALUE);
-		addEventListener(MouseEvent.MOUSE_WHEEL, mouseWheelHandler);
-		
+		addListeners();
 		createTestField();
 	}
 	
@@ -194,6 +192,11 @@ public class UILongTextField extends UITextField
 		checkVisibleText();
 	}
 	
+	protected function addListeners():void
+	{
+		addEventListener(Event.SCROLL, scrollHandler, false, int.MAX_VALUE);
+	}
+	
 	protected function createTestField():void
 	{
 		testField = new TextField();
@@ -237,7 +240,7 @@ public class UILongTextField extends UITextField
 				textStartIndex, textStartIndex + realTextLength);
 		}
 		setSelection(begin, end);
-		super.scrollV = 0;
+		super.scrollV = 1;
 		lastSelectionBeginIndex = super.selectionBeginIndex;
 		lastSelectionEndIndex = super.selectionEndIndex;
 		ignoreScrollCounter--;
@@ -335,41 +338,46 @@ public class UILongTextField extends UITextField
 	protected function updateVisibleText():void
 	{
 		var startIndex:int = 0;
-		var lengthRequired:int = 100;
+		var lengthNeeded:int = 100;
 		var delta:int = scrollVVirtual - scrollVVirtualPrev;
 		if (scrollVVirtual == 1) {
 			startIndex = 0;
 		} else {
-			if (scrollVVirtualPrev && delta > 0 && delta < numVisibleLines) {
+			if (scrollVVirtualPrev && delta > 0 && delta <= numVisibleLines) {
 				startIndex = textStartIndex + getLineOffset(delta);
-			} else if (scrollVVirtualPrev && delta < 0 && delta > - numVisibleLines) {
+			} else if (scrollVVirtualPrev && delta < 0 && delta >= - numVisibleLines) {
 				startIndex = countLinesBack(-delta, textStartIndex);
 			} else {
 				startIndex = getStartIndex();
 			}
 		}
-		var candidate:String = _text.substr(startIndex, lengthRequired);
+		var candidate:String = _text.substr(startIndex, lengthNeeded);
 		setTestText(candidate);
 		
-		// If lengthRequired was not big enough to fill the screen, get more text.
-		while (testField.numLines <= numVisibleLines &&
-			startIndex + lengthRequired < textLength) {
-			lengthRequired *= 2;
-			candidate = _text.substr(startIndex, lengthRequired);
+		// We need to distinguish Page DOWN and Ctrl+End (end of document)
+		// user actions so we need 1 extra page after the visible page and
+		// 1 more line.
+		var linesNeeded:int = numVisibleLines * 2 + 2;
+		// If lengthRequired was not big enough, get more text.
+		while (testField.numLines <= linesNeeded &&
+			startIndex + lengthNeeded < textLength) {
+			lengthNeeded *= 2;
+			candidate = _text.substr(startIndex, lengthNeeded);
 			setTestText(candidate);
 		}
 		
 		// If candidate is not long enough to fill numVisibleLines then
 		// move startIndex back and set scroll position to the end.
 		if (testField.numLines < numVisibleLines && 
-			startIndex + lengthRequired >= textLength) {
+			startIndex + lengthNeeded >= textLength) {
 			// We're at the end of text and need to scroll back to fill screen.
 			startIndex = countLinesBack(numVisibleLines - testField.numLines,
 				startIndex);
 			candidate = _text.substr(startIndex);
 			scrollVVirtual = maxScrollVVirtual;
 			notifyAboutScrollChange();
-		} else if (startIndex + lengthRequired >= textLength) {
+		} else if (startIndex + lengthNeeded >= textLength) {
+			// Count the lines left to the end and update scrollV precisely.
 			var preciseScrollV:int = maxScrollVVirtual -
 				Math.max(0, testField.numLines - numVisibleLines);
 			if (preciseScrollV != scrollVVirtual) {
@@ -496,28 +504,38 @@ public class UILongTextField extends UITextField
 		return false;
 	}
 	
+	/**
+	 * Returns true when last user action was moving to the beginning or to 
+	 * the end of document with keyboard shortcut.
+	 */
+	protected function handleBorderOfDocument():Boolean
+	{
+		if (super.selectionEndIndex == realTextLength) {
+			scrollV = maxScrollV;
+			return true;
+		}
+		return false;
+	}
+	
 	protected function scrollHandler(event:Event):void
 	{
 		if (ignoreScrollCounter > 0) {
-			if (super.scrollV != 0)
-				super.scrollV = 0;
+			if (super.scrollV != 1)
+				super.scrollV = 1;
 			if (preventIgnoredScrollEvents)
 				event.stopImmediatePropagation();
-		} else if (!handleSelectAll()) {
-			ignoreScrollCounter++;
-			scrollV += super.scrollV;
-			ignoreScrollCounter--;
+			return;
 		}
-	}
-	
-	protected function mouseWheelHandler(event:MouseEvent):void
-	{
-		// Handle only scroll up because it's never executed since we're
-		// in fact always on 1st line and can't scroll up without this. 
-		if (event.delta > 0 && scrollVVirtual > 1) {
-			scrollV -= event.delta;
-			notifyAboutScrollChange();
+		
+		if (handleSelectAll() || handleBorderOfDocument()) {
+			// Handling this actions includes dispatching scroll event.
+			event.stopImmediatePropagation();
+			return;
 		}
+		
+		ignoreScrollCounter++;
+		scrollV += super.scrollV - 1;
+		ignoreScrollCounter--;
 	}
 	
 }
