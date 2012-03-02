@@ -51,16 +51,19 @@ public class UILongTextField extends UITextField
 	protected var maxScrollVVirtualPrev:int = 0;
 	protected var maxScrollVVirtual:int = 1;
 	
+	protected var textInvisibleStartIndex:int = 0;
 	protected var textStartIndex:Number = 0;
 	protected var realText:String;
 	protected var realTextLength:int = 0;
 	protected var visibleTextLength:int = 0;
+	protected var realScrollV:int = 1;
 	
 	protected var lastEstimateWidth:Number = 0;
 	
 	protected var numVisibleLines:int = 1;
 	protected var numAverageCharsInTextLine:int = 1;
 	
+	protected var caretAtTheEnd:Boolean = true;
 	protected var selectionBeginIndexVirtual:int = 0;
 	protected var selectionEndIndexVirtual:int = 0;
 	protected var lastSelectionBeginIndex:int = 0;
@@ -220,9 +223,11 @@ public class UILongTextField extends UITextField
 	protected function readSelection():void
 	{
 		if (lastSelectionBeginIndex != super.selectionBeginIndex)
-			selectionBeginIndexVirtual = textStartIndex + super.selectionBeginIndex;
+			selectionBeginIndexVirtual = textInvisibleStartIndex + super.selectionBeginIndex;
 		if (lastSelectionEndIndex != super.selectionEndIndex)
-			selectionEndIndexVirtual = textStartIndex + super.selectionEndIndex;
+			selectionEndIndexVirtual = textInvisibleStartIndex + super.selectionEndIndex;
+		caretAtTheEnd = super.caretIndex > super.selectionBeginIndex ||
+			super.selectionBeginIndex == super.selectionEndIndex;
 	}
 	
 	protected function updateSelection():void
@@ -232,15 +237,19 @@ public class UILongTextField extends UITextField
 		var end:int;
 		if (selectionEndIndexVirtual < textStartIndex ||
 			selectionBeginIndexVirtual > textStartIndex + visibleTextLength) {
-			var invisibleIndex:int = textStartIndex + realTextLength;
-			begin = end = invisibleIndex;
+			var invisibleIndex:int = textStartIndex - textInvisibleStartIndex;
+			begin = invisibleIndex;
+			end = invisibleIndex;
 		} else {
-			begin = Math.max(selectionBeginIndexVirtual - textStartIndex, 0);
+			begin = Math.max(selectionBeginIndexVirtual - textInvisibleStartIndex, 0);
 			end = Math.min(selectionEndIndexVirtual - 
-				textStartIndex, textStartIndex + realTextLength);
+				textInvisibleStartIndex, textInvisibleStartIndex + realTextLength);
 		}
-		setSelection(begin, end);
-		super.scrollV = 1;
+		if (caretAtTheEnd)
+			setSelection(begin, end);
+		else
+			setSelection(end, begin);
+		super.scrollV = realScrollV;
 		lastSelectionBeginIndex = super.selectionBeginIndex;
 		lastSelectionEndIndex = super.selectionEndIndex;
 		ignoreScrollCounter--;
@@ -344,7 +353,7 @@ public class UILongTextField extends UITextField
 			startIndex = 0;
 		} else {
 			if (scrollVVirtualPrev && delta > 0 && delta <= numVisibleLines) {
-				startIndex = textStartIndex + getLineOffset(delta);
+				startIndex = textInvisibleStartIndex + getLineOffset(realScrollV - 1 + delta);
 			} else if (scrollVVirtualPrev && delta < 0 && delta >= - numVisibleLines) {
 				startIndex = countLinesBack(-delta, textStartIndex);
 			} else {
@@ -385,13 +394,27 @@ public class UILongTextField extends UITextField
 				notifyAboutScrollChange();
 			}
 		}
+		
+		// Add some invisible lines before the first visible line to
+		// handle scrolling up (including scrolling with selection) with
+		// Up, Page Up and Ctrl+Home.
+		var linesBeforeNeeded:int = Math.min(scrollVVirtual - 1, numVisibleLines + 1);
+		textInvisibleStartIndex = countLinesBack(linesBeforeNeeded, startIndex);
+		lengthNeeded += startIndex - textInvisibleStartIndex;
+		candidate = _text.substr(textInvisibleStartIndex, lengthNeeded);
+		
 		textStartIndex = startIndex;
 		realText = candidate;
 		realTextLength = candidate.length;
+		realScrollV = linesBeforeNeeded + 1;
 		setTestText(candidate);
-		visibleTextLength = testField.getLineOffset(numVisibleLines - 1) + 
-			testField.getLineLength(numVisibleLines - 1);
+		testField.scrollV = realScrollV;
+		var lastVisibleLine:int = Math.min(testField.numLines - 1, linesBeforeNeeded + numVisibleLines - 1);
+		visibleTextLength = testField.getLineOffset(lastVisibleLine) + 
+			testField.getLineLength(lastVisibleLine) -
+			testField.getLineOffset(0);
 		super.text = candidate;
+		super.scrollV = realScrollV;
 	}
 	
 	protected function notifyAboutScrollChange():void
@@ -499,6 +522,7 @@ public class UILongTextField extends UITextField
 			selectionBeginIndexVirtual = 0;
 			selectionEndIndexVirtual = textLength;
 			scrollV = maxScrollV;
+			notifyAboutScrollChange();
 			return true;
 		}
 		return false;
@@ -510,8 +534,13 @@ public class UILongTextField extends UITextField
 	 */
 	protected function handleBorderOfDocument():Boolean
 	{
-		if (super.selectionEndIndex == realTextLength) {
+		if (super.scrollV >= super.maxScrollV - 1) {
 			scrollV = maxScrollV;
+			notifyAboutScrollChange();
+			return true;
+		} else if (super.scrollV == 1) {
+			scrollV = 1;
+			notifyAboutScrollChange();
 			return true;
 		}
 		return false;
@@ -520,8 +549,8 @@ public class UILongTextField extends UITextField
 	protected function scrollHandler(event:Event):void
 	{
 		if (ignoreScrollCounter > 0) {
-			if (super.scrollV != 1)
-				super.scrollV = 1;
+			if (super.scrollV != realScrollV)
+				super.scrollV = realScrollV;
 			if (preventIgnoredScrollEvents)
 				event.stopImmediatePropagation();
 			return;
@@ -534,7 +563,7 @@ public class UILongTextField extends UITextField
 		}
 		
 		ignoreScrollCounter++;
-		scrollV += super.scrollV - 1;
+		scrollV += super.scrollV - realScrollV;
 		ignoreScrollCounter--;
 	}
 	
