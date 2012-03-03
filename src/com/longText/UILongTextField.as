@@ -514,7 +514,10 @@ public class UILongTextField extends UITextField
 	 */
 	protected function handleSelectAll():Boolean
 	{
-		if (super.selectionBeginIndex == 0 && 
+		var selectionChanged:Boolean = 
+			lastSelectionBeginIndex != super.selectionBeginIndex ||
+			lastSelectionEndIndex != super.selectionEndIndex;
+		if (selectionChanged && super.selectionBeginIndex == 0 && 
 			super.selectionEndIndex == realTextLength &&
 			(selectionBeginIndexVirtual != 0 || 
 			selectionEndIndexVirtual != textLength)) {
