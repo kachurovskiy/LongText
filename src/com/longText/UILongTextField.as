@@ -174,8 +174,6 @@ public class UILongTextField extends UITextField
 	{
 		if (!value)
 			value = "";
-		if (value.indexOf("\r\n") >= 0)
-			value = value.replace(/\r\n/g, "\r");
 		if (_text == value)
 			return;
 		
@@ -258,15 +256,7 @@ public class UILongTextField extends UITextField
 	protected function updateTextInfo():void
 	{
 		textLength = _text.length;
-		var numSlashR:int = getNumLinesInText("\r");
-		var numSlashN:int = getNumLinesInText("\n");
-		if (numSlashR >= numSlashN) {
-			lineSeparator = "\r";
-			numLinesInText = numSlashR;
-		} else {
-			lineSeparator = "\n";
-			numLinesInText = numSlashN;
-		}
+		numLinesInText = getNumLinesInText("\r") + getNumLinesInText("\n");
 		numAverageCharsInTextLine = Math.round(textLength / numLinesInText);
 	}
 	
@@ -380,8 +370,10 @@ public class UILongTextField extends UITextField
 		if (testField.numLines < numVisibleLines && 
 			startIndex + lengthNeeded >= textLength) {
 			// We're at the end of text and need to scroll back to fill screen.
-			startIndex = countLinesBack(numVisibleLines - testField.numLines,
-				startIndex);
+			var nextStartIndex:int = countLinesBack(
+				numVisibleLines - testField.numLines, startIndex);
+			lengthNeeded += startIndex - nextStartIndex;
+			startIndex = nextStartIndex;
 			candidate = _text.substr(startIndex);
 			scrollVVirtual = maxScrollVVirtual;
 			notifyAboutScrollChange();
@@ -452,11 +444,11 @@ public class UILongTextField extends UITextField
 	
 	protected function countLineBack(fromIndex:int):int
 	{
-		if (_text.charAt(fromIndex - 1) == lineSeparator &&
-			_text.charAt(fromIndex - 2) == lineSeparator)
+		if (isLineSeparator(_text.charAt(fromIndex - 1)) &&
+			isLineSeparator(_text.charAt(fromIndex - 2)))
 			return fromIndex - 1;
 		
-		if (_text.charAt(fromIndex - 1) == lineSeparator)
+		if (isLineSeparator(_text.charAt(fromIndex - 1)))
 			fromIndex--;
 		
 		var lineStartIndex:int = getLineStartByCharIndex(fromIndex);
@@ -467,6 +459,11 @@ public class UILongTextField extends UITextField
 		return lineStartIndex + lineOffset;
 	}
 	
+	protected function isLineSeparator(char:String):Boolean
+	{
+		return char == "\r" || char == "\n";
+	}
+	
 	protected function getLineStartByCharIndex(fromIndex:int):int
 	{
 		var lineStartIndex:int = Math.max(0, fromIndex - CONTINUOUS_SCROLL);
@@ -474,9 +471,20 @@ public class UILongTextField extends UITextField
 		var lastNewLineIndex:int = lineStartIndex;
 		do {
 			lastNewLineIndex = newLineIndex;
-			newLineIndex = _text.indexOf(lineSeparator, newLineIndex + 1);
+			newLineIndex = getNewLineIndex(newLineIndex + 1);
 		} while (newLineIndex > 0 && newLineIndex < fromIndex)
 		return lastNewLineIndex;
+	}
+	
+	protected function getNewLineIndex(fromIndex:int):int
+	{
+		var rIndex:int = _text.indexOf("\r", fromIndex);
+		var nIndex:int = _text.indexOf("\n", fromIndex);
+		if (rIndex == -1)
+			return nIndex;
+		else if (nIndex == -1)
+			return rIndex;
+		return rIndex < nIndex ? rIndex : nIndex;
 	}
 	
 	protected function getStartIndex():int
@@ -489,10 +497,15 @@ public class UILongTextField extends UITextField
 		} else {
 			var index:int = numAverageCharsInTextLine * (scrollVVirtual - 1);
 			// Find first new line and start from it.
-			if (index > 0 && _text.charAt(index - 1) != lineSeparator) {
-				index = _text.indexOf(lineSeparator, index) + 1;
+			if (index > 0 && !isLineSeparator(_text.charAt(index - 1))) {
+				var nextNewLine:int = getNewLineIndex(index);
+				if (nextNewLine == -1 || 
+					nextNewLine - index > CONTINUOUS_SCROLL) {
+					return index;
+				}
+				index = nextNewLine + 1;
 				var firstChar:String = _text.charAt(index);
-				if (firstChar == lineSeparator) {
+				if (isLineSeparator(firstChar)) {
 					index++;
 				}
 			}
